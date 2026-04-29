@@ -1,11 +1,20 @@
 import { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import {
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+} from 'react-native';
 
 type ViewMode = 'table' | 'json';
 
 type Props = {
   storeName: string;
   state: Record<string, unknown>;
+  onEditField?: (storeName: string, keyPath: string[], value: unknown) => void;
+  onDeleteKeys?: (storeName: string, keys: string[]) => void;
 };
 
 function renderValue(value: unknown): string {
@@ -26,58 +35,214 @@ function getValueColor(value: unknown): string {
   return '#d1d5db';
 }
 
-function TableRow({ keyName, value, depth = 0 }: { keyName: string; value: unknown; depth?: number }) {
+function getEditableString(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'boolean' || typeof value === 'number') return String(value);
+  return JSON.stringify(value, null, 2);
+}
+
+function parseEditValue(input: string, originalValue: unknown): unknown {
+  const trimmed = input.trim();
+  if (trimmed === 'null') return null;
+  if (trimmed === 'undefined') return undefined;
+  if (typeof originalValue === 'number') {
+    const n = Number(trimmed);
+    return isNaN(n) ? trimmed : n;
+  }
+  if (typeof originalValue === 'boolean') {
+    return trimmed.toLowerCase() === 'true';
+  }
+  if (originalValue !== null && typeof originalValue === 'object') {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed;
+    }
+  }
+  return input;
+}
+
+type TableRowProps = {
+  keyName: string;
+  value: unknown;
+  depth?: number;
+  keyPath?: string[];
+  onEdit?: (keyPath: string[], value: unknown) => void;
+  isSelected?: boolean;
+  onToggleSelect?: (key: string) => void;
+};
+
+function TableRow({
+  keyName,
+  value,
+  depth = 0,
+  keyPath = [],
+  onEdit,
+  isSelected,
+  onToggleSelect,
+}: TableRowProps) {
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
+
   const isExpandable = value !== null && typeof value === 'object';
   const paddingLeft = 12 + depth * 16;
+  const currentKeyPath = [...keyPath, keyName];
+
+  const startEdit = () => {
+    setEditValue(getEditableString(value));
+    setEditing(true);
+  };
+
+  const commitEdit = () => {
+    if (!onEdit) return;
+    onEdit(currentKeyPath, parseEditValue(editValue, value));
+    setEditing(false);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+  };
 
   return (
     <>
-      <Pressable
-        onPress={isExpandable ? () => setExpanded((prev) => !prev) : undefined}
-        style={[styles.tableRow, { paddingLeft }]}
-      >
-        <View style={styles.keyCell}>
+      <View style={[styles.tableRow, { paddingLeft }]}>
+        {depth === 0 && (
+          <Pressable
+            onPress={() => onToggleSelect?.(keyName)}
+            style={styles.checkboxCell}
+            hitSlop={6}
+            accessibilityRole="checkbox"
+            accessibilityLabel={isSelected ? `Deselect ${keyName}` : `Select ${keyName}`}
+            accessibilityState={{ checked: isSelected }}
+          >
+            <Text style={styles.checkboxText}>{isSelected ? '☑' : '☐'}</Text>
+          </Pressable>
+        )}
+        <Pressable
+          onPress={isExpandable ? () => setExpanded((prev) => !prev) : undefined}
+          style={styles.keyCell}
+        >
           {isExpandable && (
             <Text style={styles.expandIcon}>{expanded ? '\u25BC' : '\u25B6'}</Text>
           )}
           <Text style={styles.keyText}>{keyName}</Text>
-        </View>
+        </Pressable>
         <View style={styles.valueCell}>
-          {isExpandable && !expanded ? (
-            <Text style={styles.collapsedPreview}>
-              {Array.isArray(value)
-                ? `Array(${(value as unknown[]).length})`
-                : `Object(${Object.keys(value as Record<string, unknown>).length})`}
-            </Text>
-          ) : !isExpandable ? (
-            <Text style={[styles.valueText, { color: getValueColor(value) }]}>
-              {renderValue(value)}
-            </Text>
-          ) : null}
+          {editing ? (
+            <View style={styles.editRow}>
+              <TextInput
+                style={[styles.editInput, isExpandable && styles.editInputMultiline]}
+                value={editValue}
+                onChangeText={setEditValue}
+                onSubmitEditing={isExpandable ? undefined : commitEdit}
+                autoFocus
+                multiline={isExpandable}
+                accessibilityLabel={`Edit value for ${keyName}`}
+              />
+              <Pressable
+                onPress={commitEdit}
+                hitSlop={6}
+                style={styles.editActionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Confirm edit"
+              >
+                <Text style={styles.editConfirmText}>✓</Text>
+              </Pressable>
+              <Pressable
+                onPress={cancelEdit}
+                hitSlop={6}
+                style={styles.editActionBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel edit"
+              >
+                <Text style={styles.editCancelText}>✕</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.valueRow}>
+              <View style={styles.valuePrimary}>
+                {isExpandable && !expanded ? (
+                  <Text style={styles.collapsedPreview}>
+                    {Array.isArray(value)
+                      ? `Array(${(value as unknown[]).length})`
+                      : `Object(${Object.keys(value as Record<string, unknown>).length})`}
+                  </Text>
+                ) : !isExpandable ? (
+                  <Text style={[styles.valueText, { color: getValueColor(value) }]}>
+                    {renderValue(value)}
+                  </Text>
+                ) : null}
+              </View>
+              {onEdit && (
+                <Pressable
+                  onPress={startEdit}
+                  hitSlop={6}
+                  style={styles.editButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit field ${keyName}`}
+                >
+                  <Text style={styles.editButtonText}>✎</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
         </View>
-      </Pressable>
-      {isExpandable && expanded && (
+      </View>
+      {isExpandable &&
+        expanded &&
         Object.entries(value as Record<string, unknown>).map(([k, v]) => (
-          <TableRow key={k} keyName={k} value={v} depth={depth + 1} />
-        ))
-      )}
+          <TableRow
+            key={k}
+            keyName={k}
+            value={v}
+            depth={depth + 1}
+            keyPath={currentKeyPath}
+            onEdit={onEdit}
+          />
+        ))}
     </>
   );
 }
 
-export function StoreDetail({ storeName, state }: Props) {
+export function StoreDetail({ storeName, state, onEditField, onDeleteKeys }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>('table');
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(JSON.stringify(state, null, 2));
   };
+
+  const handleToggleSelect = (key: string) => {
+    setSelectedKeys((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedKeys.length === 0) return;
+    onDeleteKeys?.(storeName, selectedKeys);
+    setSelectedKeys([]);
+  };
+
+  const handleEditField = onEditField
+    ? (keyPath: string[], value: unknown) => onEditField(storeName, keyPath, value)
+    : undefined;
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>{storeName}</Text>
         <View style={styles.headerActions}>
+          {selectedKeys.length > 0 && (
+            <Pressable onPress={handleBulkDelete} style={styles.deleteButton}>
+              <Text style={styles.deleteButtonText}>
+                Delete ({selectedKeys.length})
+              </Text>
+            </Pressable>
+          )}
           <View style={styles.toggleGroup}>
             <Pressable
               onPress={() => setViewMode('table')}
@@ -111,11 +276,19 @@ export function StoreDetail({ storeName, state }: Props) {
         ) : (
           <View style={styles.tableContainer}>
             <View style={styles.tableHeader}>
-              <Text style={styles.tableHeaderText}>Key</Text>
-              <Text style={styles.tableHeaderText}>Value</Text>
+              <View style={styles.checkboxCell} aria-hidden />
+              <Text style={[styles.tableHeaderText, styles.keyHeaderText]}>Key</Text>
+              <Text style={[styles.tableHeaderText, styles.valueHeaderText]}>Value</Text>
             </View>
             {Object.entries(state).map(([key, value]) => (
-              <TableRow key={key} keyName={key} value={value} />
+              <TableRow
+                key={key}
+                keyName={key}
+                value={value}
+                onEdit={handleEditField}
+                isSelected={selectedKeys.includes(key)}
+                onToggleSelect={handleToggleSelect}
+              />
             ))}
           </View>
         )}
@@ -182,6 +355,18 @@ const styles = StyleSheet.create({
     color: '#e5e7eb',
     fontSize: 12,
   },
+  deleteButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#ef4444',
+    borderRadius: 4,
+    backgroundColor: '#7f1d1d',
+  },
+  deleteButtonText: {
+    color: '#fca5a5',
+    fontSize: 12,
+  },
   contentArea: {
     flex: 1,
   },
@@ -208,13 +393,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#374151',
+    alignItems: 'center',
   },
   tableHeaderText: {
-    flex: 1,
     fontSize: 11,
     fontWeight: 'bold',
     color: '#9ca3af',
     textTransform: 'uppercase',
+  },
+  keyHeaderText: {
+    flex: 1,
+  },
+  valueHeaderText: {
+    flex: 1,
   },
   tableRow: {
     flexDirection: 'row',
@@ -223,6 +414,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#1f2937',
     alignItems: 'flex-start',
+  },
+  checkboxCell: {
+    width: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 1,
+  },
+  checkboxText: {
+    fontSize: 14,
+    color: '#9ca3af',
   },
   keyCell: {
     flex: 1,
@@ -243,6 +444,13 @@ const styles = StyleSheet.create({
   valueCell: {
     flex: 1,
   },
+  valueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  valuePrimary: {
+    flex: 1,
+  },
   valueText: {
     fontSize: 12,
     fontFamily: 'monospace',
@@ -252,5 +460,46 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     color: '#6b7280',
     fontStyle: 'italic',
+  },
+  editButton: {
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  editButtonText: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 4,
+  },
+  editInput: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'monospace',
+    color: '#e5e7eb',
+    backgroundColor: '#1f2937',
+    borderWidth: 1,
+    borderColor: '#3b82f6',
+    borderRadius: 3,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    minHeight: 24,
+  },
+  editInputMultiline: {
+    minHeight: 60,
+  },
+  editActionBtn: {
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  editConfirmText: {
+    fontSize: 13,
+    color: '#4ade80',
+  },
+  editCancelText: {
+    fontSize: 13,
+    color: '#f87171',
   },
 });

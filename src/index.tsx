@@ -6,7 +6,7 @@ import { StoreList } from './StoreList';
 import { useZustandDevTools } from './useZustandDevTools';
 
 export default function ZustandDevToolsPanel() {
-  const { stores, lastUpdated } = useZustandDevTools();
+  const { stores, lastUpdated, editField, deleteKeys } = useZustandDevTools();
   const [selected, setSelected] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const hasAutoSelected = useRef(false);
@@ -43,7 +43,12 @@ export default function ZustandDevToolsPanel() {
       </View>
       <ScrollView style={styles.content}>
         {selectedState ? (
-          <StoreDetail storeName={selected!} state={selectedState} />
+          <StoreDetail
+            storeName={selected!}
+            state={selectedState}
+            onEditField={editField}
+            onDeleteKeys={deleteKeys}
+          />
         ) : (
           <Text style={styles.placeholder}>
             Select a store to inspect its state.

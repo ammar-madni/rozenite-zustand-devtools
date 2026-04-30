@@ -3,6 +3,7 @@
   "version": "1.0.2",
   "description": "Rozenite DevTools plugin for inspecting Zustand store state in React Native apps",
   "license": "MIT",
+  "type": "module",
   "author": "IronTony",
   "keywords": [
     "react-native",

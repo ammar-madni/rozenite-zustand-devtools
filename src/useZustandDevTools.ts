@@ -51,5 +51,9 @@ export function useZustandDevTools() {
     [client]
   );
 
-  return { stores, lastUpdated, editField, deleteKeys };
+  const refreshStores = useCallback(() => {
+    client?.send('zustand:request-snapshot', undefined);
+  }, [client]);
+
+  return { stores, lastUpdated, editField, deleteKeys, refreshStores };
 }

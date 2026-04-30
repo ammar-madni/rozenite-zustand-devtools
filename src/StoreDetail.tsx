@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,11 +10,18 @@ import {
 
 type ViewMode = 'table' | 'json';
 
+type SelectionPressEvent = {
+  nativeEvent?: {
+    shiftKey?: boolean;
+  };
+};
+
 type Props = {
   storeName: string;
   state: Record<string, unknown>;
   onEditField?: (storeName: string, keyPath: string[], value: unknown) => void;
   onDeleteKeys?: (storeName: string, keys: string[]) => void;
+  onRefresh?: () => void;
 };
 
 function renderValue(value: unknown): string {
@@ -71,7 +78,7 @@ type TableRowProps = {
   keyPath?: string[];
   onEdit?: (keyPath: string[], value: unknown) => void;
   isSelected?: boolean;
-  onToggleSelect?: (key: string) => void;
+  onToggleSelect?: (key: string, event?: SelectionPressEvent) => void;
 };
 
 function TableRow({
@@ -108,25 +115,41 @@ function TableRow({
 
   return (
     <>
-      <View style={[styles.tableRow, { paddingLeft }]}>
+      <View
+        style={[
+          styles.tableRow,
+          editing && styles.tableRowEditing,
+          isSelected && depth === 0 && styles.selectedTableRow,
+          { paddingLeft },
+        ]}
+      >
         {depth === 0 && (
           <Pressable
-            onPress={() => onToggleSelect?.(keyName)}
+            onPress={(event) =>
+              onToggleSelect?.(keyName, event as unknown as SelectionPressEvent)
+            }
             style={styles.checkboxCell}
             hitSlop={6}
             accessibilityRole="checkbox"
             accessibilityLabel={isSelected ? `Deselect ${keyName}` : `Select ${keyName}`}
+            accessibilityHint="Hold Shift while selecting another key to select the full range."
             accessibilityState={{ checked: isSelected }}
           >
-            <Text style={styles.checkboxText}>{isSelected ? '☑' : '☐'}</Text>
+            <View style={[styles.checkboxBox, isSelected && styles.checkboxBoxSelected]}>
+              {isSelected && <Text style={styles.checkboxCheck}>✓</Text>}
+            </View>
           </Pressable>
         )}
         <Pressable
           onPress={isExpandable ? () => setExpanded((prev) => !prev) : undefined}
           style={styles.keyCell}
         >
-          {isExpandable && (
-            <Text style={styles.expandIcon}>{expanded ? '\u25BC' : '\u25B6'}</Text>
+          {isExpandable ? (
+            <View style={styles.expandIconSlot}>
+              <Text style={styles.expandIcon}>{expanded ? '\u25BC' : '\u25B6'}</Text>
+            </View>
+          ) : (
+            <View style={styles.expandIconSlot} />
           )}
           <Text style={styles.keyText}>{keyName}</Text>
         </Pressable>
@@ -207,24 +230,105 @@ function TableRow({
   );
 }
 
-export function StoreDetail({ storeName, state, onEditField, onDeleteKeys }: Props) {
+function isShiftSelectionEvent(event?: SelectionPressEvent): boolean {
+  return event?.nativeEvent?.shiftKey === true;
+}
+
+export function StoreDetail({
+  storeName,
+  state,
+  onEditField,
+  onDeleteKeys,
+  onRefresh,
+}: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
+  const [selectionAnchorKey, setSelectionAnchorKey] = useState<string | null>(null);
+  const [isShiftPressed, setIsShiftPressed] = useState(false);
+  const topLevelKeys = useMemo(() => Object.keys(state), [state]);
+
+  useEffect(() => {
+    setSelectedKeys([]);
+    setSelectionAnchorKey(null);
+  }, [storeName]);
+
+  useEffect(() => {
+    setSelectedKeys((prev) => prev.filter((key) => topLevelKeys.includes(key)));
+    setSelectionAnchorKey((prev) =>
+      prev && topLevelKeys.includes(prev) ? prev : null
+    );
+  }, [topLevelKeys]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') {
+        setIsShiftPressed(true);
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') {
+        setIsShiftPressed(false);
+      }
+    };
+
+    const handleBlur = () => {
+      setIsShiftPressed(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, []);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(JSON.stringify(state, null, 2));
   };
 
-  const handleToggleSelect = (key: string) => {
+  const handleToggleSelect = (key: string, event?: SelectionPressEvent) => {
+    const shouldSelectRange =
+      (isShiftPressed || isShiftSelectionEvent(event)) && selectionAnchorKey;
+
+    if (shouldSelectRange) {
+      const anchorIndex = topLevelKeys.indexOf(selectionAnchorKey);
+      const currentIndex = topLevelKeys.indexOf(key);
+
+      if (anchorIndex !== -1 && currentIndex !== -1) {
+        const start = Math.min(anchorIndex, currentIndex);
+        const end = Math.max(anchorIndex, currentIndex);
+        const rangeKeys = topLevelKeys.slice(start, end + 1);
+
+        setSelectedKeys((prev) => Array.from(new Set([...prev, ...rangeKeys])));
+        return;
+      }
+    }
+
     setSelectedKeys((prev) =>
       prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
     );
+    setSelectionAnchorKey(key);
   };
 
   const handleBulkDelete = () => {
     if (selectedKeys.length === 0) return;
     onDeleteKeys?.(storeName, selectedKeys);
     setSelectedKeys([]);
+    setSelectionAnchorKey(null);
+  };
+
+  const handleDeleteAll = () => {
+    if (topLevelKeys.length === 0) return;
+    onDeleteKeys?.(storeName, topLevelKeys);
+    setSelectedKeys([]);
+    setSelectionAnchorKey(null);
   };
 
   const handleEditField = onEditField
@@ -236,10 +340,17 @@ export function StoreDetail({ storeName, state, onEditField, onDeleteKeys }: Pro
       <View style={styles.header}>
         <Text style={styles.title}>{storeName}</Text>
         <View style={styles.headerActions}>
-          {selectedKeys.length > 0 && (
+          {onDeleteKeys && selectedKeys.length > 0 && (
             <Pressable onPress={handleBulkDelete} style={styles.deleteButton}>
               <Text style={styles.deleteButtonText}>
                 Delete ({selectedKeys.length})
+              </Text>
+            </Pressable>
+          )}
+          {onDeleteKeys && topLevelKeys.length > 0 && (
+            <Pressable onPress={handleDeleteAll} style={styles.deleteButton}>
+              <Text style={styles.deleteButtonText}>
+                Delete All ({topLevelKeys.length})
               </Text>
             </Pressable>
           )}
@@ -264,6 +375,16 @@ export function StoreDetail({ storeName, state, onEditField, onDeleteKeys }: Pro
           <Pressable onPress={handleCopy} style={styles.copyButton}>
             <Text style={styles.copyButtonText}>Copy JSON</Text>
           </Pressable>
+          {onRefresh && (
+            <Pressable
+              onPress={onRefresh}
+              style={styles.refreshButton}
+              accessibilityRole="button"
+              accessibilityLabel="Refresh store snapshots"
+            >
+              <Text style={styles.refreshButtonText}>Refresh</Text>
+            </Pressable>
+          )}
         </View>
       </View>
       <ScrollView style={styles.contentArea}>
@@ -280,11 +401,11 @@ export function StoreDetail({ storeName, state, onEditField, onDeleteKeys }: Pro
               <Text style={[styles.tableHeaderText, styles.keyHeaderText]}>Key</Text>
               <Text style={[styles.tableHeaderText, styles.valueHeaderText]}>Value</Text>
             </View>
-            {Object.entries(state).map(([key, value]) => (
+            {topLevelKeys.map((key) => (
               <TableRow
                 key={key}
                 keyName={key}
-                value={value}
+                value={state[key]}
                 onEdit={handleEditField}
                 isSelected={selectedKeys.includes(key)}
                 onToggleSelect={handleToggleSelect}
@@ -305,6 +426,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
     paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#374151',
@@ -315,10 +437,13 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     color: '#e5e7eb',
     fontWeight: 'bold',
+    flexShrink: 1,
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexWrap: 'wrap',
     gap: 8,
   },
   toggleGroup: {
@@ -355,6 +480,18 @@ const styles = StyleSheet.create({
     color: '#e5e7eb',
     fontSize: 12,
   },
+  refreshButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    borderRadius: 4,
+    backgroundColor: '#1e3a8a',
+  },
+  refreshButtonText: {
+    color: '#bfdbfe',
+    fontSize: 12,
+  },
   deleteButton: {
     paddingVertical: 4,
     paddingHorizontal: 12,
@@ -389,7 +526,8 @@ const styles = StyleSheet.create({
   tableHeader: {
     flexDirection: 'row',
     backgroundColor: '#1f2937',
-    paddingVertical: 6,
+    minHeight: 32,
+    paddingVertical: 4,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#374151',
@@ -409,54 +547,90 @@ const styles = StyleSheet.create({
   },
   tableRow: {
     flexDirection: 'row',
-    paddingVertical: 5,
+    minHeight: 32,
+    paddingVertical: 4,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#1f2937',
+    alignItems: 'center',
+  },
+  tableRowEditing: {
     alignItems: 'flex-start',
   },
+  selectedTableRow: {
+    backgroundColor: '#172554',
+  },
   checkboxCell: {
-    width: 22,
+    width: 28,
+    minHeight: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 1,
   },
-  checkboxText: {
-    fontSize: 14,
-    color: '#9ca3af',
+  checkboxBox: {
+    width: 14,
+    height: 14,
+    borderWidth: 1,
+    borderColor: '#6b7280',
+    borderRadius: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111827',
+  },
+  checkboxBoxSelected: {
+    borderColor: '#60a5fa',
+    backgroundColor: '#2563eb',
+  },
+  checkboxCheck: {
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: 'bold',
+    color: '#ffffff',
   },
   keyCell: {
     flex: 1,
+    minHeight: 24,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+  },
+  expandIconSlot: {
+    width: 14,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
   },
   expandIcon: {
     fontSize: 8,
+    lineHeight: 12,
     color: '#6b7280',
-    width: 12,
   },
   keyText: {
     fontSize: 12,
+    lineHeight: 18,
     fontFamily: 'monospace',
     color: '#93c5fd',
   },
   valueCell: {
     flex: 1,
+    minHeight: 24,
+    justifyContent: 'center',
   },
   valueRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 24,
   },
   valuePrimary: {
     flex: 1,
   },
   valueText: {
     fontSize: 12,
+    lineHeight: 18,
     fontFamily: 'monospace',
   },
   collapsedPreview: {
     fontSize: 12,
+    lineHeight: 18,
     fontFamily: 'monospace',
     color: '#6b7280',
     fontStyle: 'italic',

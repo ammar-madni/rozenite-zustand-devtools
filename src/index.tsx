@@ -6,7 +6,8 @@ import { StoreList } from './StoreList';
 import { useZustandDevTools } from './useZustandDevTools';
 
 export default function ZustandDevToolsPanel() {
-  const { stores, lastUpdated, editField, deleteKeys } = useZustandDevTools();
+  const { stores, lastUpdated, editField, deleteKeys, refreshStores } =
+    useZustandDevTools();
   const [selected, setSelected] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const hasAutoSelected = useRef(false);
@@ -48,6 +49,7 @@ export default function ZustandDevToolsPanel() {
             state={selectedState}
             onEditField={editField}
             onDeleteKeys={deleteKeys}
+            onRefresh={refreshStores}
           />
         ) : (
           <Text style={styles.placeholder}>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRozeniteDevToolsClient } from '@rozenite/plugin-bridge';
 
 import { AllStoresSnapshot, EventMap } from './types';
@@ -37,5 +37,19 @@ export function useZustandDevTools() {
     };
   }, [client]);
 
-  return { stores, lastUpdated };
+  const editField = useCallback(
+    (storeName: string, keyPath: string[], value: unknown) => {
+      client?.send('zustand:edit-field', { storeName, keyPath, value });
+    },
+    [client]
+  );
+
+  const deleteKeys = useCallback(
+    (storeName: string, keys: string[]) => {
+      client?.send('zustand:delete-keys', { storeName, keys });
+    },
+    [client]
+  );
+
+  return { stores, lastUpdated, editField, deleteKeys };
 }
